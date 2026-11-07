@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateRoleAccess, validateLoginMethodForRole } from '@/lib/auth';
+import { evaluateRoleAccess, validateLoginMethodForRole, isStagingEnvironment } from '@/lib/auth';
 import { UserProfile, UserRole } from '@/types';
 
 describe('Role Authorization Matrix & Guard Enforcement', () => {
@@ -130,5 +130,30 @@ describe('Role Authorization Matrix & Guard Enforcement', () => {
     assert.equal(validateLoginMethodForRole('class_teacher', 'password').allowed, true);
     assert.equal(validateLoginMethodForRole('hod', 'password').allowed, true);
     assert.equal(validateLoginMethodForRole('admin', 'password').allowed, true);
+  });
+
+  it('accurately identifies staging preview environments while protecting production', () => {
+    // Staging and preview hosts
+    assert.equal(isStagingEnvironment('cbitspms-git-dev-saleemshaik2005s-projects.vercel.app'), true);
+    assert.equal(isStagingEnvironment('localhost:3000'), true);
+    assert.equal(isStagingEnvironment('127.0.0.1:3000'), true);
+    assert.equal(isStagingEnvironment('https://my-preview-deployment.vercel.app'), true);
+
+    // Live production domain must strictly NOT be recognized as staging
+    const envObj = process.env as Record<string, string | undefined>;
+    const originalEnv = envObj.NODE_ENV;
+    const originalNextEnv = envObj.NEXT_PUBLIC_ENVIRONMENT;
+    const originalVercelEnv = envObj.VERCEL_ENV;
+    try {
+      delete envObj.NEXT_PUBLIC_ENVIRONMENT;
+      delete envObj.VERCEL_ENV;
+      envObj.NODE_ENV = 'production';
+      assert.equal(isStagingEnvironment('cbitspms.vercel.app'), false);
+      assert.equal(isStagingEnvironment('https://cbitspms.vercel.app'), false);
+    } finally {
+      envObj.NODE_ENV = originalEnv;
+      if (originalNextEnv) envObj.NEXT_PUBLIC_ENVIRONMENT = originalNextEnv;
+      if (originalVercelEnv) envObj.VERCEL_ENV = originalVercelEnv;
+    }
   });
 });

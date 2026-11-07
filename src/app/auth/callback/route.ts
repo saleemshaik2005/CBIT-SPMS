@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { supabaseAdmin } from '@/lib/supabase-admin';
-import { validateLoginMethodForRole } from '@/lib/auth';
+import { validateLoginMethodForRole, isStagingEnvironment } from '@/lib/auth';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -56,14 +56,75 @@ export async function GET(request: Request) {
       );
     }
 
-    const email = session.user.email.toLowerCase();
+    const email = session.user.email.toLowerCase().trim();
 
-    // Verify strictly against our pre-authorized 67-student + 6-faculty roster
-    const { data: profile } = await supabaseAdmin
+    // 1. Verify against profiles table
+    let { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('*, mentor:mentor_id(id, full_name, email, phone_number)')
       .ilike('email', email)
       .maybeSingle();
+
+    // Staging / Preview environment: Auto-provision authorized testing student if not yet in database
+    const isStagingEnv = isStagingEnvironment(appOrigin);
+
+    if (!profile && isStagingEnv && email === 'saleemshaik2005@gmail.com') {
+      console.log(`[OAuth Callback] Staging detected: Auto-provisioning authorized student: ${email}`);
+
+      // Lookup a mentor in staging profiles
+      const { data: mentor } = await supabaseAdmin
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('role', 'mentor')
+        .limit(1)
+        .maybeSingle();
+
+      const stagingStudentProfile = {
+        id: session.user.id,
+        email: email,
+        full_name: 'SHAIK SALEEM',
+        role: 'student',
+        roll_number: '160124771129',
+        department: 'Artificial Intelligence and Data Science (AI&DS)',
+        section: '2',
+        batch_year: '2024-2028 (5th Semester)',
+        is_lateral_entry: false,
+        mentor_id: mentor?.id || null,
+        login_method: 'google',
+        must_change_password: false,
+        is_active: true,
+        skills: ['Python', 'TensorFlow', 'React', 'Next.js', 'AI OCR', 'SQL'],
+        github_url: 'https://github.com/saleemshaik2005',
+        linkedin_url: 'https://linkedin.com/in/saleemshaik',
+        updated_at: new Date().toISOString(),
+      };
+
+      const { data: createdProfile, error: createProfileErr } = await supabaseAdmin
+        .from('profiles')
+        .upsert(stagingStudentProfile, { onConflict: 'id' })
+        .select('*, mentor:mentor_id(id, full_name, email, phone_number)')
+        .single();
+
+      if (!createProfileErr && createdProfile) {
+        profile = createdProfile;
+      } else {
+        console.error('[OAuth Callback] Staging auto-provision error:', createProfileErr);
+      }
+    }
+
+    // 2. If profile exists with a different UUID (e.g. from manual pre-seed), sync with session.user.id
+    if (profile && profile.id !== session.user.id) {
+      console.log(`[OAuth Callback] Synchronizing profile UUID: ${profile.id} -> ${session.user.id}`);
+      try {
+        await supabaseAdmin
+          .from('profiles')
+          .update({ id: session.user.id, updated_at: new Date().toISOString() })
+          .eq('email', email);
+        profile.id = session.user.id;
+      } catch (syncErr) {
+        console.warn('[OAuth Callback] UUID sync note:', syncErr);
+      }
+    }
 
     // A valid student MUST have an official CBIT roll_number (prevents auto-created trigger rows from bypassing whitelist)
     const isUnauthorized =

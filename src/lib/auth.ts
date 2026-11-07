@@ -109,11 +109,35 @@ export async function requireRole(
   // Fetch or re-verify authoritative profile directly from database
   let profile = initialProfile;
   if (!profile) {
-    const { data: dbProfile } = await supabaseAdmin
+    let { data: dbProfile } = await supabaseAdmin
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .maybeSingle();
+
+    if (!dbProfile && user.email) {
+      const email = user.email.toLowerCase().trim();
+      const { data: profileByEmail } = await supabaseAdmin
+        .from('profiles')
+        .select('*')
+        .ilike('email', email)
+        .maybeSingle();
+
+      if (profileByEmail) {
+        if (profileByEmail.id !== user.id) {
+          try {
+            await supabaseAdmin
+              .from('profiles')
+              .update({ id: user.id, updated_at: new Date().toISOString() })
+              .eq('email', email);
+            profileByEmail.id = user.id;
+          } catch (syncErr) {
+            console.warn('[requireRole] Profile UUID sync note:', syncErr);
+          }
+        }
+        dbProfile = profileByEmail;
+      }
+    }
     profile = dbProfile;
   }
 
@@ -142,4 +166,20 @@ export async function requireRole(
     error: null,
     response: null,
   };
+}
+
+/**
+ * Accurately determines if the current runtime context is staging / preview / development.
+ * Strictly guarantees that live production (cbitspms.vercel.app) is NEVER marked as staging.
+ */
+export function isStagingEnvironment(hostOrUrl?: string | null): boolean {
+  if (process.env.NEXT_PUBLIC_ENVIRONMENT === 'staging') return true;
+  if (process.env.VERCEL_ENV === 'preview') return true;
+  if (process.env.NODE_ENV !== 'production') return true;
+
+  const target = (hostOrUrl || '').toLowerCase();
+  if (target.includes('localhost') || target.includes('127.0.0.1')) return true;
+  if (target.includes('-git-') || target.includes('preview')) return true;
+  if (target.startsWith('cbitspms.vercel.app') || target === 'cbitspms.vercel.app') return false;
+  return false;
 }

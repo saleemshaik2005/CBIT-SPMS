@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { supabaseAdmin } from '../supabase-admin';
 
 export async function createServerSupabaseClient() {
   const cookieStore = await cookies();
@@ -40,14 +41,39 @@ export async function getAuthenticatedUser() {
       return { user: null, profile: null, error: error?.message || 'Unauthorized' };
     }
 
-    // Fetch caller's profile
-    const { data: profile, error: profileErr } = await supabase
+    // 1. Fetch caller's profile via session client
+    let { data: profile } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .maybeSingle();
 
-    return { user, profile: profile || null, error: profileErr?.message || null };
+    // 2. If not found by ID, query via supabaseAdmin by email (handles pre-seeded UUID mismatch)
+    if (!profile && user.email) {
+      const email = user.email.toLowerCase().trim();
+      const { data: adminProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('*')
+        .ilike('email', email)
+        .maybeSingle();
+
+      if (adminProfile) {
+        if (adminProfile.id !== user.id) {
+          try {
+            await supabaseAdmin
+              .from('profiles')
+              .update({ id: user.id, updated_at: new Date().toISOString() })
+              .eq('email', email);
+            adminProfile.id = user.id;
+          } catch (syncErr) {
+            console.warn('[getAuthenticatedUser] UUID sync note:', syncErr);
+          }
+        }
+        profile = adminProfile;
+      }
+    }
+
+    return { user, profile: profile || null, error: null };
   } catch (err: any) {
     return { user: null, profile: null, error: err.message || 'Session verification failed' };
   }

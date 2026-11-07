@@ -382,16 +382,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const supabase = createClient();
       supabase.auth.getSession().then(async ({ data: { session } }) => {
         if (session?.user?.email) {
-          const email = session.user.email.toLowerCase();
+          const email = session.user.email.toLowerCase().trim();
+
+          // 1. First consult authoritative /api/me (cookie-verified server session)
+          try {
+            const meRes = await fetch('/api/me');
+            if (meRes.ok) {
+              const meData = await meRes.json();
+              if (meData.authenticated && meData.user) {
+                persistActiveUser(meData.user);
+                setIsAuthenticated(true);
+                return;
+              }
+            }
+          } catch (meErr) {
+            console.warn('[AppContext] /api/me lookup error:', meErr);
+          }
+
+          // 2. Direct profiles query fallback
           const { data: profile } = await supabase
             .from('profiles')
             .select('*, mentor:mentor_id(id, full_name, email, phone_number)')
-            .eq('email', email)
+            .ilike('email', email)
             .maybeSingle();
 
-          // Strict Roster Whitelist Verification:
+          // 3. Strict Roster Whitelist Verification:
           // Reject if profile does not exist OR if role is student without an assigned CBIT roll_number
           if (!profile || (profile.role === 'student' && !profile.roll_number)) {
+            // Check if user is already authenticated in localStorage from OAuth callback bridge
+            const savedUserStr = localStorage.getItem('cbit_current_user');
+            if (savedUserStr) {
+              try {
+                const parsed = JSON.parse(savedUserStr);
+                if (
+                  parsed &&
+                  parsed.email &&
+                  parsed.email.toLowerCase().trim() === email &&
+                  parsed.role === 'student' &&
+                  parsed.roll_number
+                ) {
+                  persistActiveUser(parsed);
+                  setIsAuthenticated(true);
+                  return;
+                }
+              } catch (e) {}
+            }
+
             await supabase.auth.signOut();
             try {
               localStorage.setItem('cbit_is_auth', 'false');
