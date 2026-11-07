@@ -15,6 +15,32 @@ export interface RequireRoleOptions {
 }
 
 /**
+ * Asserts whether a login method ('google' vs 'password') is authorized for the given role.
+ * - Students must strictly authenticate through 'google'.
+ * - Faculty and Admins must strictly authenticate through 'password'.
+ */
+export function validateLoginMethodForRole(
+  role: UserRole | string | undefined,
+  method: 'google' | 'password'
+): { allowed: boolean; error?: string } {
+  if (role === 'student' && method === 'password') {
+    return {
+      allowed: false,
+      error: 'Students must authenticate using official Google Sign-In. Password login is restricted to Faculty and Administration.',
+    };
+  }
+
+  if (role && role !== 'student' && method === 'google') {
+    return {
+      allowed: false,
+      error: 'Faculty and administrative accounts must sign in using college email and password.',
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
  * Pure evaluation function for role access matrix, active state, and password change requirement.
  */
 export function evaluateRoleAccess(

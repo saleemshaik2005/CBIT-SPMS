@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateRoleAccess } from '@/lib/auth';
+import { evaluateRoleAccess, validateLoginMethodForRole } from '@/lib/auth';
 import { UserProfile, UserRole } from '@/types';
 
 describe('Role Authorization Matrix & Guard Enforcement', () => {
@@ -101,5 +101,34 @@ describe('Role Authorization Matrix & Guard Enforcement', () => {
     const check = evaluateRoleAccess(null, ['student']);
     assert.equal(check.allowed, false);
     assert.equal(check.status, 403);
+  });
+
+  it('strictly isolates student login: rejects student accounts from faculty password login', () => {
+    const result = validateLoginMethodForRole('student', 'password');
+    assert.equal(result.allowed, false);
+    assert.match(result.error || '', /Students must authenticate using official Google Sign-In/i);
+  });
+
+  it('strictly isolates faculty login: rejects faculty accounts from student Google login', () => {
+    const mentorResult = validateLoginMethodForRole('mentor', 'google');
+    assert.equal(mentorResult.allowed, false);
+    assert.match(mentorResult.error || '', /Faculty and administrative accounts must sign in using college email and password/i);
+
+    const teacherResult = validateLoginMethodForRole('class_teacher', 'google');
+    assert.equal(teacherResult.allowed, false);
+
+    const hodResult = validateLoginMethodForRole('hod', 'google');
+    assert.equal(hodResult.allowed, false);
+
+    const adminResult = validateLoginMethodForRole('admin', 'google');
+    assert.equal(adminResult.allowed, false);
+  });
+
+  it('permits valid login methods for respective roles', () => {
+    assert.equal(validateLoginMethodForRole('student', 'google').allowed, true);
+    assert.equal(validateLoginMethodForRole('mentor', 'password').allowed, true);
+    assert.equal(validateLoginMethodForRole('class_teacher', 'password').allowed, true);
+    assert.equal(validateLoginMethodForRole('hod', 'password').allowed, true);
+    assert.equal(validateLoginMethodForRole('admin', 'password').allowed, true);
   });
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { supabaseAdmin } from '@/lib/supabase-admin';
+import { validateLoginMethodForRole } from '@/lib/auth';
 
 // In-memory rate limiting map (IP and Email)
 const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
@@ -111,11 +112,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Reject students from password login
-    if (profile.role === 'student') {
+    const methodCheck = validateLoginMethodForRole(profile.role, 'password');
+    if (!methodCheck.allowed) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Students must authenticate using official Google Sign-In. Password login is restricted to Faculty and Administration.',
+          error: methodCheck.error,
         },
         { status: 403 }
       );
