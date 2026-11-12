@@ -44,3 +44,8 @@ scripts/seed_production_roster.js
 scripts/make_pdf.js
 scratch/
 
+.foodwise_build/
+.local/
+output/
+*.zip
+/CBIT_SPMS_Final_Mini_Project_Presentation.pptx
